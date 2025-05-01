@@ -13,6 +13,7 @@
 
 Reference: https://arxiv.org/abs/2405.15052.
 """
+
 import re
 from typing import NamedTuple, Optional, Union
 
@@ -40,7 +41,7 @@ from axlearn.common.layers import (
 )
 from axlearn.common.metrics import WeightedScalar
 from axlearn.common.module import Module, child_context
-from axlearn.common.param_init import FanAxes, constant_initializer
+from axlearn.common.param_init import ConstantInitializer, FanAxes, constant_initializer
 from axlearn.common.quantized_dot_general.layers import DenseGeneralBaseLayer
 from axlearn.common.utils import (
     Nested,
@@ -673,10 +674,12 @@ class TransformerFeedForwardMoE(DenseGeneralBaseLayer):
         activation: Union[str, tuple[str, str]] = "nn.relu"
         dropout: InstantiableConfig = Dropout.default_config()
         stochastic_depth: InstantiableConfig = StochasticDepth.default_config()
-        # The inner structure of the layer: "prenorm", "postnorm", "hybridnorm", "nonorm".
+        # The inner structure of the layer: "prenorm", "postnorm", "hybridnorm",
+        # "hybridnorm_v2", "nonorm".
         # * prenorm: y = x + feedforward(norm(x))
         # * postnorm: y = norm(x + feedforward(x))
         # * hybridnorm: y = postnorm(x + feedforward(prenorm(x)))
+        # * hybridnorm_v2: y = postnorm(x + prenorm(feedforward(x)))
         # * nonorm: y = feedforward(x)   # no residual, which is usually applied externally.
         #
         # References:
@@ -706,6 +709,9 @@ class TransformerFeedForwardMoE(DenseGeneralBaseLayer):
         # H - hidden dim
         # S - sequence dim
         dim_to_mesh_axis_map: dict[str, Optional[PartitionSpec]] = {}
+
+        # Optional prenorm_scale parameter.
+        prenorm_scale: Optional[float] = None
 
     @classmethod
     def default_config(cls) -> Config:
@@ -766,15 +772,26 @@ class TransformerFeedForwardMoE(DenseGeneralBaseLayer):
         # Add norm layers for different structures.
         if cfg.structure in ["prenorm", "postnorm"]:
             self._add_child("norm", cfg.norm.set(input_dim=cfg.input_dim))
-        elif cfg.structure == "hybridnorm":
-            self._add_child("prenorm", cfg.norm.set(input_dim=cfg.input_dim))
+        elif cfg.structure in ("hybridnorm", "hybridnorm_v2"):
+            if cfg.prenorm_scale:
+                self._add_child(
+                    "prenorm",
+                    cfg.norm.clone().set(
+                        input_dim=cfg.input_dim,
+                        param_init=ConstantInitializer.default_config().set(
+                            value=cfg.prenorm_scale
+                        ),
+                    ),
+                )
+            else:
+                self._add_child("prenorm", cfg.norm.set(input_dim=cfg.input_dim))
             self._add_child("postnorm", cfg.norm.set(input_dim=cfg.input_dim))
         elif cfg.structure == "nonorm":
             pass
         else:
             raise NotImplementedError(cfg.structure)
         # Add dropout layers for different structures.
-        if cfg.structure in ["prenorm", "hybridnorm", "nonorm"]:
+        if cfg.structure in ["prenorm", "hybridnorm", "hybridnorm_v2", "nonorm"]:
             self._add_child("dropout1", cfg.dropout)
             self._add_child("dropout2", cfg.dropout)
         elif cfg.structure in ["postnorm"]:
@@ -809,6 +826,14 @@ class TransformerFeedForwardMoE(DenseGeneralBaseLayer):
             if cfg.residual_weight != 1:
                 x *= cfg.residual_weight
             x += inputs
+        elif cfg.structure == "hybridnorm_v2":
+            x = self._dispatch_and_combine(inputs)
+            x = self.prenorm(x)
+            x = self.dropout2(x)
+            x = self.stochastic_depth(x)
+            if cfg.residual_weight != 1:
+                x *= cfg.residual_weight
+            x = self.postnorm(inputs + x)
         elif cfg.structure == "nonorm":
             x = self._dispatch_and_combine(inputs)
             x = self.dropout2(x)
@@ -864,7 +889,7 @@ class TransformerFeedForwardMoE(DenseGeneralBaseLayer):
         x = jnp.einsum("ogsec,ogsm->oegcm", dispatch_tensor, x)
         x = with_sharding_constraint(x, cfg.dim_to_mesh_axis_map["oegcm"])
         x = self._wi_activation(x)
-        if cfg.structure in ["prenorm", "hybridnorm", "nonorm"]:
+        if cfg.structure in ["prenorm", "hybridnorm", "hybridnorm_v2", "nonorm"]:
             x = self.dropout1(x)
         with child_context("wo_einsum", module=self):
             x = self.einsum_maybe_quantized(
