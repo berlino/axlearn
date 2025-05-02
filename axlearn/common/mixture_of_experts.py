@@ -773,18 +773,12 @@ class TransformerFeedForwardMoE(DenseGeneralBaseLayer):
         if cfg.structure in ["prenorm", "postnorm"]:
             self._add_child("norm", cfg.norm.set(input_dim=cfg.input_dim))
         elif cfg.structure in ("hybridnorm", "hybridnorm_v2"):
+            norm = cfg.norm.clone().set(input_dim=cfg.input_dim)
             if cfg.prenorm_scale:
-                self._add_child(
-                    "prenorm",
-                    cfg.norm.clone().set(
-                        input_dim=cfg.input_dim,
-                        param_init=ConstantInitializer.default_config().set(
-                            value=cfg.prenorm_scale
-                        ),
-                    ),
+                norm = norm.set(
+                    param_init=ConstantInitializer.default_config().set(value=cfg.prenorm_scale)
                 )
-            else:
-                self._add_child("prenorm", cfg.norm.set(input_dim=cfg.input_dim))
+            self._add_child("prenorm", norm)
             self._add_child("postnorm", cfg.norm.set(input_dim=cfg.input_dim))
         elif cfg.structure == "nonorm":
             pass
