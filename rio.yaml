@@ -62,9 +62,8 @@ pipelines:
           version: ci-${GIT_BRANCH}-${GIT_HASH}
 
   # GPU Bolt prb pipeline.
-  - group: unit-tests-gpu
-    # TODO: re-enable once we have enough quota to run this job per pr.
-    disabled: true
+  - group: unit-tests-gpue
+    disabled: false
     branchName: apple-main
     machine:
       baseImage: docker.apple.com/base-images/ubi9/python3.10-builder:latest
