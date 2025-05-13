@@ -62,7 +62,7 @@ pipelines:
           version: ci-${GIT_BRANCH}-${GIT_HASH}
 
   # GPU Bolt prb pipeline.
-  - group: unit-tests-gpue
+  - group: unit-tests-gpu
     disabled: false
     branchName: apple-main
     machine:
