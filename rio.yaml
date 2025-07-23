@@ -1,0 +1,157 @@
+schemaVersion: 2.0
+timeout: 240
+
+# Configures the number of pipelines that can run in parallel. Max 16.
+# https://docs.aci.apple.com/rio/guide-to-rio/schema.html?highlight=concurrentbuild#guide-to-rio-schema-pipelines-jenkins-2-0
+jenkins:
+  concurrentBuild: true
+  maxConcurrentTotal: 16
+
+pipelines:
+  # Build and test (but don't publish) for every PR to main.
+  - group: unit-tests-cpu
+    branchName: main
+    machine:
+      baseImage: docker.apple.com/base-images/ubi8/python3.9-builder
+      env:
+        DOCKER_BUILDKIT: "1"
+    build:
+      template: freestyle:v4:prb
+      steps: ["true"]
+    package:
+      dockerfile:
+        - dockerfilePath: Dockerfile
+          perApplication: false
+          target: ci
+          env:
+            TARGET: ci
+          context: .
+          version: ci-${GIT_BRANCH}-${GIT_HASH}
+
+  # GPU Bolt prb pipeline.
+  - group: unit-tests-gpu
+    disabled: false
+    branchName: main
+    machine:
+      baseImage: docker.apple.com/base-images/ubi9/python3.10-builder:latest
+    secrets:
+      names:
+        - mlinfrasys-env
+    build:
+      template: freestyle:v4:prb
+      steps:
+        # CI testing content is kept on apple-ci branch to minimize the amount
+        # of changes developers may see in their pull-requests having to do only
+        # with CI testing as they become out-of-date with main branch.
+        - git fetch origin apple-ci
+        - git merge --no-verify --no-commit --ff --allow-unrelated-histories -X ours origin/apple-ci
+        - bash ci/run_tests.sh axlearn_unit_tests --platform=gpu --use-bastion
+    finally:
+      notify:
+        pullRequestComment:
+          postOnSuccess: false
+          postOnFailure: false
+        email:
+          enabled: True
+    reports:
+      junit:
+        trim: false
+        paths:
+          - tests*.xml
+
+  # TPU Bolt prb pipeline.
+  - group: unit-tests-tpu
+    disabled: false
+    branchName: main
+    machine:
+      baseImage: docker.apple.com/ajax/base:latest
+    secrets:
+      names:
+        - mlinfrasys-env
+        - gcp-luna-dev-appleconnect
+    build:
+      template: freestyle:v4:prb
+      steps:
+        # CI testing content is kept on apple-ci branch to minimize the amount
+        # of changes developers may see in their pull-requests having to do only
+        # with CI testing as they become out-of-date with main branch.
+        - git fetch origin apple-ci
+        - git merge --no-verify --no-commit --ff --allow-unrelated-histories -X ours origin/apple-ci
+        - bash ci/run_tests.sh axlearn_tpu_unit_tests --platform=tpu
+    finally:
+      notify:
+        pullRequestComment:
+          postOnSuccess: false
+          postOnFailure: false
+        email:
+          enabled: True
+    reports:
+      junit:
+        trim: false
+        paths:
+          - tests*.xml
+
+  # Publish nightly pypi package to internal.
+  - name: nightly
+    branchName: main
+    machine:
+      baseImage: docker.apple.com/base-images/ubi8/python3.9-builder
+      env:
+        DOCKER_BUILDKIT: "1"
+    secrets:
+      names:
+        - pypirc
+    trigger:
+      timer: "@midnight"
+      gitPush: false
+    build:
+      template: freestyle:v4:build
+      steps:
+        - export SSH_AUTH_SOCK=${SSH_AUTH_SOCK_DEPLOY_KEY}
+        # The publish script is only in apple-rio branch, not main. We fetch this file explicitly.
+        - git fetch origin && git checkout origin/apple-rio -- publish.sh
+        - ./publish.sh --repository=apple-pypi --name_suffix=nightly --version_suffix="dev$(date '+%Y%m%d%H%M%S')"
+
+  # Publish pypi package to PUBLIC testing repo. Must be triggered manually.
+  - name: PUBLIC-pypi-test
+    branchName: main
+    machine:
+      baseImage: docker.apple.com/base-images/ubi8/python3.9-builder
+      env:
+        DOCKER_BUILDKIT: "1"
+    secrets:
+      names:
+        - pypirc
+    trigger:
+      # Note: we disable timer, since it should be manually triggered.
+      gitPush: false
+    build:
+      template: freestyle:v4:build
+      steps:
+        - export SSH_AUTH_SOCK=${SSH_AUTH_SOCK_DEPLOY_KEY}
+        # The publish script is only in apple-rio branch, not main. We fetch this file explicitly.
+        - git fetch origin && git checkout origin/apple-rio -- publish.sh
+        # Publish with suffix so we can test the same version multiple times.
+        - ./publish.sh --repository=testpypi --version_suffix="dev$(date '+%Y%m%d%H%M%S')"
+
+  # Publish pypi package to PUBLIC repo. Must be triggered manually.
+  - name: PUBLIC-pypi
+    branchName: main
+    machine:
+      baseImage: docker.apple.com/base-images/ubi8/python3.9-builder
+      env:
+        DOCKER_BUILDKIT: "1"
+    secrets:
+      names:
+        - pypirc
+    trigger:
+      # Note: we disable timer, since it should be manually triggered.
+      gitPush: false
+    build:
+      template: freestyle:v4:build
+      steps:
+        - export SSH_AUTH_SOCK=${SSH_AUTH_SOCK_DEPLOY_KEY}
+        # The publish script is only in apple-rio branch, not main. We fetch this file explicitly.
+        - git fetch origin && git checkout origin/apple-rio -- publish.sh
+        # Publishes using the pyproject version in main.
+        - ./publish.sh --repository=pypi
