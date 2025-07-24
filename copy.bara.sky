@@ -1,0 +1,90 @@
+"""
+Copybara configuration for synchronizing AXLearn between internal and external repositories.
+
+This configuration defines two workflows:
+
+1. Pull workflow: Syncs approved PRs from external (GitHub public) to internal (Apple internal)
+   - Requires "ready-to-merge" label and approved reviews
+   - Excludes internal only files from destination to preserve internal files
+
+2. Push workflow: Syncs changes from internal to external repository
+   - Excludes internal only files from being pushed externally
+   - Create a new CODEOWNERS
+   - Scrubs internal keywords ("Rio", "CONFIDENTIAL") from commit messages
+"""
+
+internal_url = "git@github.pie.apple.com:foundation-models/axlearn.git"
+external_url = "git@github.com:apple/axlearn.git"
+
+internal_only_files = [
+    "rio.yaml",
+    "pull_request_template.md",
+    "CODEOWNERS",
+    "copy.bara.sky",
+]
+
+external_codeowners = """* @apple/axlearn-admins
+axlearn/cloud/ @apple/axlearn-cloud
+"""
+
+def write_file(filename, content):
+    def fn(ctx):
+        filepath = ctx.new_path(filename)
+        ctx.write_path(filepath, content)
+    return fn
+
+
+core.workflow(
+    name = "pull",
+    origin = git.github_pr_origin(
+        url = external_url,
+        required_labels = ["ready-to-merge"],
+        baseline_from_branch = True,
+        required_check_runs = ["build-and-test"],
+        review_state = "HEAD_COMMIT_APPROVED",
+        review_approvers = ["OWNER"],
+    ),
+    destination = git.destination(
+        url = internal_url,
+        push = "main",
+        integrates = []
+    ),
+    mode = "CHANGE_REQUEST",
+    set_rev_id = False,
+
+    origin_files = glob(["**"]),
+    destination_files = glob(["**"], exclude = internal_only_files),
+
+    authoring = authoring.pass_thru("AXLearn Contributor <noreply@apple.com>"),
+    transformations = [
+        metadata.save_author(),
+        metadata.expose_label("COPYBARA_INTEGRATE_REVIEW", ignore_label_not_found=False),
+    ],
+)
+
+core.workflow(
+    name = "push",
+    origin = git.origin(
+        url = internal_url,
+        ref = "main",
+    ),
+    destination = git.destination(
+        url = external_url,
+        push = "main",
+    ),
+    mode = "ITERATIVE",
+
+    origin_files = glob(["**"], exclude = internal_only_files),
+    destination_files = glob(["**"]),
+
+    authoring = authoring.pass_thru("AXLearn Contributor <noreply@apple.com>"),
+    transformations = [
+        # Write CODEOWNERS file with external_codeowners.
+        write_file("CODEOWNERS", external_codeowners),
+        metadata.restore_author(),
+        metadata.expose_label("COPYBARA_INTEGRATE_REVIEW"),
+        # Scrub internal keywords from commit messages
+        metadata.scrubber("Rio"),
+        metadata.scrubber('(^|\n)CONFIDENTIAL:(.|\n)*')
+    ],
+)
