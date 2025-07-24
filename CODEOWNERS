@@ -1,2 +1,8 @@
 * @foundation-models/axlearn-team
+axlearn/audio @dongseong-hwang
 axlearn/cloud/ @foundation-models/ajax-infra
+axlearn/common/flash_attention @hanzhi-zhou @xuan-zou
+axlearn/common/kv_cache @hanzhi-zhou @xuan-zou
+copy.bara.sky @foundation-models/ajax-infra @foundation-models/ajax-oncall
+rio.yaml @foundation-models/ajax-infra @foundation-models/ajax-oncall
+pyproject.toml @foundation-models/ajax-infra @foundation-models/ajax-oncall
