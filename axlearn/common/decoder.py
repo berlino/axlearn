@@ -806,6 +806,7 @@ class LmHead(BaseLayer):
         vocab_size: Required[int] = REQUIRED  # Size of the LM vocabulary.
         # TODO(markblee): Rename this to input_dim.
         embedding_dim: Required[int] = REQUIRED  # Dimensionality of vocabulary embedding table.
+        use_fp32: Optional[bool] = None
 
     @classmethod
     def default_config(cls):
@@ -834,4 +835,10 @@ class LmHead(BaseLayer):
         Returns:
             A float Tensor of shape [batch_size, seq_len, vocab_size].
         """
-        return jnp.einsum("bsh,vh->bsv", x, self.parameters["weight"])
+        cfg = self.config
+        if cfg.use_fp32:
+            with jax.default_matmul_precision("float32"):
+                return x.asdtype(jnp.float32) @ self.parameters["weight"].astype(jnp.float32).T
+
+        else:
+            return jnp.einsum("bsh,vh->bsv", x, self.parameters["weight"])
