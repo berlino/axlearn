@@ -40,9 +40,16 @@ core.workflow(
         url = external_url,
         required_labels = ["ready-to-merge"],
         baseline_from_branch = True,
-        required_check_runs = ["build-and-test"],
+        required_check_runs = [
+            "pre-commit",
+            "build-and-test-job (a)",
+            "build-and-test-job (b)",
+            "build-and-test-job (c)",
+            "build-and-test-job (d)",
+            "build-and-test-job (e)",
+        ],
         review_state = "HEAD_COMMIT_APPROVED",
-        review_approvers = ["OWNER"],
+        review_approvers = ["OWNER", "MEMBER"],
     ),
     destination = git.destination(
         url = internal_url,
@@ -52,7 +59,7 @@ core.workflow(
     mode = "CHANGE_REQUEST",
     set_rev_id = False,
 
-    origin_files = glob(["**"]),
+    origin_files = glob(["**"], exclude = ["CODEOWNERS"]),
     destination_files = glob(["**"], exclude = internal_only_files),
 
     authoring = authoring.pass_thru("AXLearn Contributor <noreply@apple.com>"),
@@ -83,7 +90,9 @@ core.workflow(
         write_file("CODEOWNERS", external_codeowners),
         metadata.restore_author(),
         metadata.expose_label("COPYBARA_INTEGRATE_REVIEW"),
-        # Scrub internal keywords from commit messages
+        # Scrub internal PR number.
+        metadata.scrubber(r' \(#\d+\)'),
+        # Scrub internal keywords from commit messages.
         metadata.scrubber("Rio"),
         metadata.scrubber('(^|\n)CONFIDENTIAL:(.|\n)*')
     ],
