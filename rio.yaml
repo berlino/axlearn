@@ -112,6 +112,23 @@ pipelines:
         - git fetch origin && git checkout origin/apple-rio -- publish.sh
         - ./publish.sh --repository=apple-pypi --name_suffix=nightly --version_suffix="dev$(date '+%Y%m%d%H%M%S')"
 
+  # Push codebase to external using Copybara.
+  - name: push-oss
+    branchName: main
+    machine:
+      baseImage: openjdk:26-slim-bullseye
+      env:
+        DOCKER_BUILDKIT: "1"
+    trigger:
+      gitPush: true
+    build:
+      template: freestyle:v4:build
+      steps:
+        - export SSH_AUTH_SOCK=${SSH_AUTH_SOCK_DEPLOY_KEY}
+        - apt update && apt install -y wget
+        - wget https://github.com/google/copybara/releases/download/v20250721/copybara_deploy.jar
+        - java -jar copybara_deploy.jar copy.bara.sky push
+
   # Publish pypi package to PUBLIC testing repo. Must be triggered manually.
   - name: PUBLIC-pypi-test
     branchName: main
